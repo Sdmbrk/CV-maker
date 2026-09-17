@@ -755,27 +755,21 @@
     }
 
     var PAGE_PX = 1123; // one A4 page at 96dpi, matches the .page background tile height
-    // Use the fractional bounding-box height (not offsetHeight, which rounds) and add a
-    // couple of px of buffer, since html2pdf's internal page-slicing math uses floor()
-    // rounding that can otherwise spawn a near-empty extra page even when content fits.
-    var naturalHeight = Math.ceil(pageEl.getBoundingClientRect().height) + 3;
-    // Generous tolerance: most single-person CVs run slightly over one physical A4 page;
-    // rather than force an early page-break that leaves a blank gap, give them one
-    // continuously-sized page with zero wasted space. Only content that's genuinely much
-    // longer gets real multi-page A4 pagination.
+    var SCALE = 2; // must match html2canvas scale below
+    var naturalHeight = Math.ceil(pageEl.getBoundingClientRect().height);
     var singlePage = naturalHeight <= PAGE_PX * 1.3;
 
     var opts = {
       margin:0, filename:name,
       image:{type:'jpeg', quality:0.98},
-      html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff'}
+      html2canvas:{scale:SCALE, useCORS:true, backgroundColor:'#ffffff'}
     };
     if(singlePage){
-      // Fit the PDF page exactly to the content height so there is no leftover blank space.
-      opts.jsPDF = {unit:'px', format:[794, naturalHeight], orientation:'portrait'};
+      // naturalHeight+6 gives html2pdf's floor() rounding enough headroom so it never
+      // creates a second near-empty page. Unit 'px' here = CSS px, matching content size.
+      opts.jsPDF = {unit:'px', format:[794, naturalHeight+6], orientation:'portrait'};
       opts.pagebreak = {mode:['avoid-all']};
     } else {
-      // Genuinely multi-page content: paginate at real A4 boundaries without over-eager avoidance.
       opts.jsPDF = {unit:'pt', format:'a4', orientation:'portrait'};
       opts.pagebreak = {mode:['css']};
     }
