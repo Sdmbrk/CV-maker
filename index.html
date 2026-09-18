@@ -143,13 +143,22 @@
   .blk-bullets{margin:5px 0 0;padding-left:16px;font-size:11.9px;color:#3f3f3f;line-height:1.55;}
   .sig{margin-top:40px;font-size:13px;font-weight:700;color:#2b2b2b;text-align:right;}
 
+  @page{ size:A4; margin:0; }
   @media print{
     .topbar,.editor{display:none !important;}
     .app{grid-template-columns:1fr !important;}
-    .preview-wrap{padding:0;}
-    .page{box-shadow:none;transform:none !important;}
-    .page-scale-holder{width:auto !important;height:auto !important;}
+    .preview-wrap{padding:0;overflow:visible;}
+    .page-scale-holder{width:794px !important;height:auto !important;}
+    .page{
+      box-shadow:none;
+      width:794px;
+      /* Shrink slightly so the full design lands on a single A4 sheet
+         instead of being split by the browser's paginator. */
+      transform:scale(0.945) !important;
+      transform-origin:top left;
+    }
     body{background:#fff;}
+    html,body{overflow:visible;}
   }
   .hidden{display:none !important;}
 
@@ -730,7 +739,11 @@
   }
   document.getElementById('pdfBtn').addEventListener('click',function(){
     var btn=this, label=btn.textContent;
-    if(typeof html2pdf==='undefined'){ window.print(); return; }
+    if(typeof html2pdf==='undefined'){
+      btn.textContent='PDF lib not loaded';
+      setTimeout(function(){ btn.textContent=label; }, 2000);
+      return;
+    }
     btn.textContent='Generating…'; btn.disabled=true;
     var name=((state.name||'CV').trim().replace(/[^a-z0-9\- ]/gi,'')||'CV')+'.pdf';
 
@@ -754,38 +767,60 @@
       queueFitPreview();
     }
 
-    var PAGE_PX = 1123; // one A4 page at 96dpi, matches the .page background tile height
-    var SCALE = 2; // must match html2canvas scale below
-    var naturalHeight = Math.ceil(pageEl.getBoundingClientRect().height);
-    var singlePage = naturalHeight <= PAGE_PX * 1.3;
+    var SCALE = 2;
+
+    // html2pdf places the canvas image at page width and scales height proportionally.
+    // We use A4 width (595.28pt) and compute the exact page height needed so the
+    // image always fits on exactly one page — no overflow, no blank space.
+    var A4_W_PT = 595.28;
+    var naturalH = pageEl.getBoundingClientRect().height;
+    var naturalW = 794; // fixed layout width
+    // image_h_pt = (canvasH/canvasW) * A4_W_PT = (naturalH/naturalW) * A4_W_PT
+    var imgHPt = naturalH / naturalW * A4_W_PT;
+    var pageHPt = imgHPt + 3; // +3pt buffer for rounding safety
 
     var opts = {
       margin:0, filename:name,
       image:{type:'jpeg', quality:0.98},
       html2canvas:{scale:SCALE, useCORS:true, backgroundColor:'#ffffff'}
     };
-    if(singlePage){
-      // naturalHeight+6 gives html2pdf's floor() rounding enough headroom so it never
-      // creates a second near-empty page. Unit 'px' here = CSS px, matching content size.
-      opts.jsPDF = {unit:'px', format:[794, naturalHeight+6], orientation:'portrait'};
-      opts.pagebreak = {mode:['avoid-all']};
-    } else {
-      opts.jsPDF = {unit:'pt', format:'a4', orientation:'portrait'};
-      opts.pagebreak = {mode:['css']};
+    opts.jsPDF = {unit:'pt', format:[A4_W_PT, pageHPt], orientation:'portrait'};
+    opts.pagebreak = {mode:['avoid-all']};
+
+    // Download the generated blob directly, so what you get is always the
+    // exact PDF we rendered — never the browser's own print engine, which
+    // re-flows the live HTML and produces a different, multi-page layout.
+    function downloadBlob(blob, filename){
+      try{
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+        return true;
+      }catch(e){ return false; }
     }
 
     html2pdf().set(opts).from(pageEl).outputPdf('blob').then(function(blob){
       restore();
+      function done(){ btn.textContent=label; btn.disabled=false; }
       if(downloadsCap && downloadsCap.save){
-        return downloadsCap.save({filename:name, data:blob}).then(function(){
-          btn.textContent=label; btn.disabled=false;
-        }).catch(function(err){
-          btn.textContent=label; btn.disabled=false;
-          if(!(err && err.code==='declined')) window.print();
-        });
+        return downloadsCap.save({filename:name, data:blob})
+          .then(done)
+          .catch(function(err){
+            if(!(err && err.code==='declined')) downloadBlob(blob, name);
+            done();
+          });
       }
-      btn.textContent=label; btn.disabled=false; window.print();
-    }).catch(function(){ restore(); btn.textContent=label; btn.disabled=false; window.print(); });
+      downloadBlob(blob, name);
+      done();
+    }).catch(function(err){
+      restore();
+      btn.textContent=label; btn.disabled=false;
+      console.error('PDF generation failed:', err);
+    });
   });
 
   try{
